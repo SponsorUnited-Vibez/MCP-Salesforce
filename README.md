@@ -11,6 +11,8 @@ A Model Context Protocol (MCP) server implementation for Salesforce integration,
 - Execute Tooling API requests
 - Execute Apex REST requests
 - Make direct REST API calls to Salesforce
+- Retrieve plain text content of a Salesforce ContentNote by ID (`get_note_content`)
+- Retrieve all notes linked to any Salesforce record, with full content (`get_notes_for_record`)
 
 
 ## Configuration
