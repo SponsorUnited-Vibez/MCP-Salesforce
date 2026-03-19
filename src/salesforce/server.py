@@ -8,6 +8,7 @@
 import asyncio
 import json
 from typing import Any, Optional
+import re
 import os
 import shutil
 import subprocess
@@ -144,6 +145,12 @@ class SalesforceClient:
             self.sobjects_cache[object_name] = filtered_fields
             
         return json.dumps(self.sobjects_cache[object_name], indent=2)
+
+def strip_html(html: str) -> str:
+    """Converts HTML-formatted note content to plain text."""
+    text = re.sub(r'<br\s*/?>', '\n', html)
+    text = re.sub(r'<[^>]+>', '', text)
+    return text.strip()
 
 # Create a server instance
 server = Server("salesforce-mcp")
@@ -372,6 +379,39 @@ async def handle_list_tools() -> list[types.Tool]:
                 "required": ["path"],
             },
         ),
+        types.Tool(
+            name="get_note_content",
+            description="Retrieves the plain text content of a Salesforce ContentNote by its ID. Use this when you have a ContentNote ID and need to read the full body of the note.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "note_id": {
+                        "type": "string",
+                        "description": "The Salesforce ID of the ContentNote record",
+                    },
+                },
+                "required": ["note_id"],
+            },
+        ),
+        types.Tool(
+            name="get_notes_for_record",
+            description="Retrieves all ContentNotes (Salesforce Notes) linked to a given record ID, including their plain text content. Returns a JSON array with title, date, author, and content for each note.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "record_id": {
+                        "type": "string",
+                        "description": "The Salesforce ID of the record to retrieve notes for (e.g., an Account, Contact, or Opportunity ID)",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of notes to return, ordered by most recent first (default: 10)",
+                        "default": 10,
+                    },
+                },
+                "required": ["record_id"],
+            },
+        ),
     ]
 
 @server.call_tool()
@@ -527,6 +567,86 @@ async def handle_call_tool(name: str, arguments: dict[str, str]) -> list[types.T
             types.TextContent(
                 type="text",
                 text=f"RESTful API Call Result (JSON):\n{json.dumps(results, indent=2)}",
+            )
+        ]
+    elif name == "get_note_content":
+        note_id = arguments.get("note_id")
+        if not note_id:
+            raise ValueError("Missing 'note_id' argument")
+        if not sf_client.sf:
+            raise ValueError("Salesforce connection not established.")
+        url = f"{sf_client.sf.base_url}sobjects/ContentNote/{note_id}/Content"
+        try:
+            response = sf_client.sf.session.get(url, headers=sf_client.sf.headers)
+            response.raise_for_status()
+            content = strip_html(response.content.decode("utf-8"))
+        except Exception as e:
+            return [
+                types.TextContent(
+                    type="text",
+                    text=f"Error retrieving note content: {str(e)}",
+                )
+            ]
+        return [
+            types.TextContent(
+                type="text",
+                text=content,
+            )
+        ]
+    elif name == "get_notes_for_record":
+        record_id = arguments.get("record_id")
+        limit = int(arguments.get("limit", 10))
+        if not record_id:
+            raise ValueError("Missing 'record_id' argument")
+        if not sf_client.sf:
+            raise ValueError("Salesforce connection not established.")
+
+        # Find all ContentDocuments linked to this record
+        link_results = sf_client.sf.query(
+            f"SELECT ContentDocumentId FROM ContentDocumentLink "
+            f"WHERE LinkedEntityId = '{record_id}'"
+        )
+        doc_ids = [r["ContentDocumentId"] for r in link_results.get("records", [])]
+
+        if not doc_ids:
+            return [
+                types.TextContent(
+                    type="text",
+                    text=f"No notes found for record {record_id}",
+                )
+            ]
+
+        # Query ContentNote metadata for those document IDs
+        ids_soql = "(" + ",".join(f"'{d}'" for d in doc_ids) + ")"
+        note_results = sf_client.sf.query(
+            f"SELECT Id, Title, CreatedDate, CreatedBy.Name FROM ContentNote "
+            f"WHERE Id IN {ids_soql} ORDER BY CreatedDate DESC LIMIT {limit}"
+        )
+        notes = note_results.get("records", [])
+
+        # Fetch blob content for each note
+        results = []
+        for note in notes:
+            note_id = note["Id"]
+            url = f"{sf_client.sf.base_url}sobjects/ContentNote/{note_id}/Content"
+            try:
+                response = sf_client.sf.session.get(url, headers=sf_client.sf.headers)
+                response.raise_for_status()
+                content = strip_html(response.content.decode("utf-8"))
+            except Exception as e:
+                content = f"[Error retrieving content: {str(e)}]"
+            results.append({
+                "id": note_id,
+                "title": note.get("Title", ""),
+                "created_date": note.get("CreatedDate", ""),
+                "created_by": note.get("CreatedBy", {}).get("Name", "") if note.get("CreatedBy") else "",
+                "content": content,
+            })
+
+        return [
+            types.TextContent(
+                type="text",
+                text=json.dumps(results, indent=2),
             )
         ]
     raise ValueError(f"Unknown tool: {name}")
