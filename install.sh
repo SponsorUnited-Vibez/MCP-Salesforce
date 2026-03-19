@@ -165,8 +165,10 @@ except (FileNotFoundError, json.JSONDecodeError):
 if "mcpServers" not in config:
     config["mcpServers"] = {}
 
+uv_path = __import__("shutil").which("uv") or "uv"
+
 config["mcpServers"]["salesforce"] = {
-    "command": "uv",
+    "command": uv_path,
     "args": [
         "run",
         "--directory", install_dir,
