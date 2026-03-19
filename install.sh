@@ -34,6 +34,27 @@ fi
 PYTHON_VERSION=$(python3 --version 2>&1)
 echo "  Found: $PYTHON_VERSION"
 
+# ── Step 1b: Check / Install Git ─────────────────────────────
+echo ""
+echo "[1b/5] Checking Git installation..."
+
+if ! command -v git &>/dev/null; then
+    echo ""
+    echo "Git is not installed."
+    echo "macOS will now prompt you to install Developer Tools (includes Git)."
+    echo "This can take 10-15 minutes. Please wait for it to finish."
+    echo ""
+    xcode-select --install 2>/dev/null || true
+    echo "Press Enter once the Developer Tools installation is complete..."
+    read -r
+    if ! command -v git &>/dev/null; then
+        echo "ERROR: Git still not found. Please install it manually and re-run this script."
+        exit 1
+    fi
+fi
+
+echo "  Found: $(git --version 2>&1)"
+
 # ── Step 2: Install uv ──────────────────────────────────────
 echo ""
 echo "[2/5] Installing uv..."
